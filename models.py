@@ -2,7 +2,8 @@ from torch import nn
 
 from ops.basic_ops import ConsensusModule, Identity
 from transforms import *
-from torch.nn.init import normal, constant
+from torch.nn.init import normal_, constant_
+from torch.utils.tensorboard import SummaryWriter
 
 class TSN(nn.Module):
     def __init__(self, num_class, num_segments, modality,
@@ -69,11 +70,11 @@ TSN Configurations:
 
         std = 0.001
         if self.new_fc is None:
-            normal(getattr(self.base_model, self.base_model.last_layer_name).weight, 0, std)
-            constant(getattr(self.base_model, self.base_model.last_layer_name).bias, 0)
+            normal_(getattr(self.base_model, self.base_model.last_layer_name).weight, 0, std)
+            constant_(getattr(self.base_model, self.base_model.last_layer_name).bias, 0)
         else:
-            normal(self.new_fc.weight, 0, std)
-            constant(self.new_fc.bias, 0)
+            normal_(self.new_fc.weight, 0, std)
+            constant_(self.new_fc.bias, 0)
         return feature_dim
 
     def _prepare_base_model(self, base_model):
@@ -162,7 +163,7 @@ TSN Configurations:
                 normal_weight.append(ps[0])
                 if len(ps) == 2:
                     normal_bias.append(ps[1])
-                  
+
             elif isinstance(m, torch.nn.BatchNorm1d):
                 bn.extend(list(m.parameters()))
             elif isinstance(m, torch.nn.BatchNorm2d):
@@ -210,16 +211,13 @@ TSN Configurations:
     def _get_diff(self, input, keep_rgb=False):
         input_c = 3 if self.modality in ["RGB", "RGBDiff"] else 2
         input_view = input.view((-1, self.num_segments, self.new_length + 1, input_c,) + input.size()[2:])
+
         if keep_rgb:
             new_data = input_view.clone()
+            new_data[:,:,1:] = input_view[:, :, :-1] - input_view[:,:,1:]
         else:
             new_data = input_view[:, :, 1:, :, :, :].clone()
-
-        for x in reversed(list(range(1, self.new_length + 1))):
-            if keep_rgb:
-                new_data[:, :, x, :, :, :] = input_view[:, :, x, :, :, :] - input_view[:, :, x - 1, :, :, :]
-            else:
-                new_data[:, :, x - 1, :, :, :] = input_view[:, :, x, :, :, :] - input_view[:, :, x - 1, :, :, :]
+            new_data = input_view[:, :, :-1] - input_view[:,:,1:]
 
         return new_data
 
@@ -302,3 +300,16 @@ TSN Configurations:
         elif self.modality == 'RGBDiff':
             return torchvision.transforms.Compose([GroupMultiScaleCrop(self.input_size, [1, .875, .75]),
                                                    GroupRandomHorizontalFlip(is_flow=False)])
+
+
+
+
+
+if __name__ == '__main__':
+    writer = SummaryWriter('runs/model')
+
+    model = TSN(200, 3, 'RGBDiff')
+
+    inputs = torch.rand(3*6, 3, 224,224)
+    writer.add_graph(model, inputs)
+    writer.close()
